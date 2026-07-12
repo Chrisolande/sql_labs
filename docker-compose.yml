@@ -5,7 +5,7 @@ services:
   db:
     build:
       context: .
-      dockerfile: Dockerfile.db
+      dockerfile: Dockerfile
     container_name: careerpilot-db
     command: postgres -c shared_preload_libraries=pg_textsearch
     environment:
