@@ -44,6 +44,10 @@ class Job(Base):
     required_skills: Mapped[list[str]] = mapped_column(
         ARRAY(String), server_default="{}", nullable=False
     )
+
+    skills_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    search_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     employee_count: Mapped[str | None] = mapped_column(String, nullable=True)
     funding: Mapped[str | None] = mapped_column(String, nullable=True)
     company_summary: Mapped[str | None] = mapped_column(String, nullable=True)

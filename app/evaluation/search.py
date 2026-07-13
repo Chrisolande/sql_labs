@@ -25,10 +25,11 @@ RETRIEVAL_DATASET = "careerpilot-matching-eval-v2"
 
 @dataclass(frozen=True, slots=True)
 class SearchParams:
-    bm25_weight: float = 0.2069
-    vector_weight: float = 0.7931
-    cosine_distance_threshold: float = 0.4513
+    bm25_weight: float = 0.3302
+    vector_weight: float = 0.6698
+    cosine_distance_threshold: float = 0.3794
     result_limit: int = 20
+    candidate_limit: int = 150
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -46,7 +47,7 @@ async def search_jobs_with_embedding(
     stmt = text("""
         SELECT * FROM hybrid_search_jobs(
             :query_text, :query_embedding, :cosine_distance_threshold,
-            :bm25_weight, :vector_weight, :result_limit
+            :bm25_weight, :vector_weight, :result_limit, :candidate_limit
         )
     """)
     result = await db.execute(
@@ -58,6 +59,7 @@ async def search_jobs_with_embedding(
             "bm25_weight": params.bm25_weight,
             "vector_weight": params.vector_weight,
             "result_limit": params.result_limit,
+            "candidate_limit": params.candidate_limit,
         },
     )
     return result.mappings().all()
@@ -89,6 +91,7 @@ async def run_search(
                 bm25_weight=params.bm25_weight,
                 vector_weight=params.vector_weight,
                 result_limit=params.result_limit,
+                candidate_limit=params.candidate_limit,
             )
 
         descriptions: dict = {}
@@ -124,7 +127,7 @@ async def _embed_query(client: Any, query: str) -> list[float]:
 async def precompute_query_embeddings(queries: list[str]) -> dict[str, list[float]]:
     from app.core.llm.embeddings import get_embeddings_client  # noqa: PLC0415
 
-    client = get_embeddings_client()
+    client = get_embeddings_client(task_type="retrieval_query")
     unique = list(dict.fromkeys(queries))
     embeddings: dict[str, list[float]] = {}
     for q in unique:

@@ -19,10 +19,13 @@ EMBEDDING_BATCH_SIZE = 10
 EMBEDDING_MAX_CONCURRENCY = 3
 
 
-def get_embeddings_client() -> GoogleGenerativeAIEmbeddings:
+def get_embeddings_client(
+    task_type: str = "retrieval_document",
+) -> GoogleGenerativeAIEmbeddings:
     return GoogleGenerativeAIEmbeddings(
         model="gemini-embedding-2",
         output_dimensionality=1024,
+        task_type=task_type,
         api_key=settings.google_api_key,
     )
 
@@ -42,6 +45,17 @@ def build_job_embedding_text(job: Job) -> str:
         company_summary=job.company_summary,
     )
     return "\n".join(f"{k}:{v}" for k, v in doc.model_dump(exclude_none=True).items())
+
+
+def build_job_search_text(job: Job) -> str:
+    parts = [
+        job.title or "",
+        job.role or "",
+        job.job_function or "",
+        job.company_name or "",
+        job.skills_text or "",
+    ]
+    return " ".join(p for p in parts if p).strip()
 
 
 def compute_job_embedding_hash(job: Job) -> str:
@@ -97,7 +111,7 @@ async def embed_texts_in_batches(
     texts: list[str],
     batch_size: int = EMBEDDING_BATCH_SIZE,
     max_concurrency: int = EMBEDDING_MAX_CONCURRENCY,
-) -> list[list[float]]:
+) -> list[list[float] | BaseException]:
     batches = list(batched(texts, batch_size, strict=False))
     semaphore = asyncio.Semaphore(max_concurrency)
 
@@ -106,14 +120,16 @@ async def embed_texts_in_batches(
         async with semaphore:
             return await client.aembed_documents(list(batch))
 
-    async with asyncio.TaskGroup() as tg:
-        tasks = [tg.create_task(embed_one_batch(b)) for b in batches]
+    batch_results = await asyncio.gather(
+        *(embed_one_batch(b) for b in batches), return_exceptions=True
+    )
 
-    batch_results = [task.result() for task in tasks]
-
-    vectors: list[list[float]] = []
-    for batch_vectors in batch_results:
-        vectors.extend(batch_vectors)
+    vectors: list[list[float] | BaseException] = []
+    for batch, result in zip(batches, batch_results, strict=False):
+        if isinstance(result, BaseException):
+            vectors.extend([result] * len(batch))
+        else:
+            vectors.extend(result)
     return vectors
 
 
@@ -159,8 +175,15 @@ async def refresh_stale_embeddings(session: AsyncSession) -> None:
         return
 
     client = get_embeddings_client()
-    vectors = await embed_texts_in_batches(client, texts_to_embed)
+    results: list[list[float] | BaseException] = []
+    for chunk in batched(list(zip(jobs_to_update, texts_to_embed, strict=False)), 100):
+        chunk_jobs_data, chunk_texts = zip(*chunk, strict=False)
+        results.extend(await embed_texts_in_batches(client, list(chunk_texts)))
+        await asyncio.sleep(1)
 
-    for (job, emb, fresh_hash, _), vector in zip(jobs_to_update, vectors, strict=False):
-        apply_embedding_update(job, emb, fresh_hash, vector, now, session)
+    for (job, emb, fresh_hash, _), result in zip(jobs_to_update, results, strict=False):
+        if isinstance(result, BaseException):
+            continue
+        apply_embedding_update(job, emb, fresh_hash, result, now, session)
+
     await session.commit()

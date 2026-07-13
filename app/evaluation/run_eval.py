@@ -5,7 +5,6 @@ from statistics import mean
 from langsmith import Client, aevaluate
 from loguru import logger
 
-from app.core.config.settings import settings
 from app.evaluation.metrics import (
     MRR_REGRESSION_THRESHOLD,
     NDCG_REGRESSION_THRESHOLD,
@@ -50,7 +49,7 @@ def check_retrieval_regression(client: Client, current_project_name: str) -> boo
     """Return True if any metric regresses beyond its configured threshold."""
     dataset = next(client.list_datasets(dataset_name=RETRIEVAL_DATASET), None)
     if dataset is None:
-        logger.info("No dataset found — skipping regression check.")
+        logger.info("No dataset found - skipping regression check.")
         return False
 
     # Most-recent first, current project is at index 0 after sorting.
@@ -63,7 +62,7 @@ def check_retrieval_regression(client: Client, current_project_name: str) -> boo
 
     if current_project_name not in names:
         logger.warning(
-            "Current project {!r} not found among experiments — skipping.",
+            "Current project {!r} not found among experiments - skipping.",
             current_project_name,
         )
         return False
@@ -98,10 +97,6 @@ def check_retrieval_regression(client: Client, current_project_name: str) -> boo
 
 
 async def run_evaluations() -> None:
-    if not settings.langsmith_api_key:
-        logger.error("LANGSMITH_API_KEY not set. Cannot run evaluations.")
-        sys.exit(1)
-
     client = Client()
     params = DEFAULT_SEARCH_PARAMS
     logger.info(

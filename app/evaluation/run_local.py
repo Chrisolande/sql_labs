@@ -2,6 +2,7 @@ import asyncio
 import json
 from typing import Annotated
 
+from dotenv import load_dotenv
 from langsmith import Client
 from loguru import logger
 from typer import Option, Typer
@@ -20,6 +21,8 @@ from app.evaluation.search import (
     precompute_query_embeddings,
     search_jobs_with_embedding,
 )
+
+load_dotenv()
 
 app = Typer(
     name="run_local",
@@ -50,7 +53,7 @@ async def _collect_rankings(
                 )
                 rankings[qid] = {str(r["id"]): float(r["rrf_score"]) for r in rows}
             except Exception:
-                logger.exception("search failed for query_id=%s", qid)
+                logger.exception("search failed for query_id={}", qid)
                 rankings[qid] = {}
     return rankings
 
@@ -163,52 +166,57 @@ def optimize(
     ] = 100,
     limit: Annotated[
         int,
-        Option("--limit", min=1, help="Maximum candidates per search call."),
+        Option("--limit", min=1, help="Maximum candidates to return per query."),
     ] = DEFAULT_SEARCH_PARAMS.result_limit,
+    candidate_limit: Annotated[
+        int,
+        Option(
+            "--candidate-limit",
+            min=1,
+            help="BM25/vector pool size. Also tuned by the optimizer (100-200 range).",
+        ),
+    ] = DEFAULT_SEARCH_PARAMS.candidate_limit,
 ) -> None:
-    """Find optimal retrieval hyperparameters via Optuna (TPE sampler)."""
     import optuna
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-    async def _objective_async(trial: optuna.Trial) -> float:
+    examples = _load_examples()
+    queries = [ex.inputs["query"] for ex in examples]
+
+    async def _precompute() -> dict[str, list[float]]:
+        print("Pre-computing query embeddings (done once for all trials)...")
+        return await precompute_query_embeddings(queries)
+
+    async def _objective_async(
+        trial: optuna.Trial,
+        embeddings: dict[str, list[float]],
+    ) -> float:
         bm25_w = trial.suggest_float("bm25_weight", 0.0, 1.0)
         vec_w = round(1.0 - bm25_w, 4)
-        thr = trial.suggest_float("cosine_distance_threshold", 0.3, 0.9)
+        thr = trial.suggest_float("cosine_distance_threshold", 0.1, 0.9)
+
+        cand = trial.suggest_int("candidate_limit", 100, 250)
         params = SearchParams(
             bm25_weight=bm25_w,
             vector_weight=vec_w,
             cosine_distance_threshold=thr,
             result_limit=limit,
+            candidate_limit=cand,
         )
-        examples = _load_examples()
-        queries = [ex.inputs["query"] for ex in examples]
-        embeddings = await precompute_query_embeddings(queries)
-
-        # Evaluate in 4 progressive chunks for early stopping
-        chunks = [examples[i::4] for i in range(4)]
-        running_ndcg: list[float] = []
-        for i, chunk in enumerate(chunks):
-            report = await _evaluate_once(chunk, embeddings, params)
-            ndcg = float(report["overall"].get("nDCG@10", 0.0))
-            running_ndcg.append(ndcg)
-            trial.report(sum(running_ndcg) / len(running_ndcg), step=i)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
-
-        return sum(running_ndcg) / len(running_ndcg)
+        report = await _evaluate_once(examples, embeddings, params)
+        return float(report["overall"].get("nDCG@10", 0.0))
 
     with asyncio.Runner() as runner:
+        embeddings = runner.run(_precompute())
 
         def objective(trial: optuna.Trial) -> float:
-            return runner.run(_objective_async(trial))
+            return runner.run(_objective_async(trial, embeddings))
 
         study = optuna.create_study(
             direction="maximize",
-            sampler=optuna.samplers.TPESampler(),
-            pruner=optuna.pruners.HyperbandPruner(
-                min_resource=1, max_resource=4, reduction_factor=3
-            ),
+            sampler=optuna.samplers.TPESampler(seed=42),
+            pruner=optuna.pruners.NopPruner(),
         )
         study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 
@@ -218,6 +226,7 @@ def optimize(
     print(f"bm25_weight: {best['bm25_weight']:.4f}")
     print(f"vector_weight: {round(1.0 - best['bm25_weight'], 4):.4f}")
     print(f"cosine_distance_threshold: {best['cosine_distance_threshold']:.4f}")
+    print(f"candidate_limit: {best['candidate_limit']}")
     print(f"Best nDCG@10: {best_val:.4f}")
 
 

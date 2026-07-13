@@ -4,12 +4,15 @@ from datetime import UTC, datetime
 
 from loguru import logger
 
+from app.core.config.settings import settings
 from app.core.db.base import async_session
 from app.core.db.models.ingestion_run import IngestionRun
 from app.core.jdl.discovery import run_discovery
+from app.core.jdl.repository import close_stale_jobs
 from app.core.jdl.seed_criteria import DISCOVERY_SEED_CRITERIA
 
 INTERVAL_SECONDS = 43200
+SOURCE_NAME = "primary"
 
 
 async def run_ingestion_cycle() -> None:
@@ -33,23 +36,36 @@ async def run_ingestion_cycle() -> None:
                     result = await run_discovery(
                         db=db,
                         criteria=criteria,
-                        source_name="primary",
+                        source_name=SOURCE_NAME,
                         seen_source_job_ids=all_seen_ids,
+                        close_stale=False,
                     )
                 totals["created"] += result.jobs_created
                 totals["updated"] += result.jobs_updated
-                totals["closed"] += result.jobs_closed
                 logger.info(
-                    "seed={} created={} updated={} closed={}",
+                    "seed={} created={} updated={}",
                     seed_dump,
                     result.jobs_created,
                     result.jobs_updated,
-                    result.jobs_closed,
                 )
             except Exception as exc:
                 logger.exception("seed failed: {}", seed_dump)
                 failed_seeds.append({"seed": seed_dump, "error": str(exc)})
                 continue
+
+        async with async_session() as db:
+            totals["closed"] = await close_stale_jobs(
+                db,
+                SOURCE_NAME,
+                all_seen_ids,
+                settings.discovery_unconfirmed_limit,
+            )
+            await db.commit()
+        logger.info(
+            "ingestion cycle closed={} seen_sources={}",
+            totals["closed"],
+            len(all_seen_ids),
+        )
     except Exception as exc:
         error = str(exc)
         raise

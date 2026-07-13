@@ -12,14 +12,15 @@ async def search_jobs(
     bm25_weight: float = 0.2069,
     vector_weight: float = 0.7931,
     result_limit: int = 20,
+    candidate_limit: int = 150,
 ) -> list[JobSearchResult]:
-    embeddings_client = get_embeddings_client()
+    embeddings_client = get_embeddings_client(task_type="retrieval_query")
     query_embedding = await embeddings_client.aembed_query(query_text)
 
     stmt = text("""
         SELECT * FROM hybrid_search_jobs(
             :query_text, :query_embedding, :cosine_distance_threshold,
-            :bm25_weight, :vector_weight, :result_limit
+            :bm25_weight, :vector_weight, :result_limit, :candidate_limit
         )
     """)
 
@@ -32,6 +33,7 @@ async def search_jobs(
             "bm25_weight": bm25_weight,
             "vector_weight": vector_weight,
             "result_limit": result_limit,
+            "candidate_limit": candidate_limit,
         },
     )
     rows = result.mappings().all()

@@ -1,5 +1,8 @@
+from dotenv import load_dotenv
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ = load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -24,7 +27,7 @@ class Settings(BaseSettings):
     fallback_max_results: int = 20
 
     langsmith_tracing: bool = False
-    langsmith_api_key: str | None = None
+    langchain_api_key: str | None = None
     langsmith_project: str | None = None
 
     @model_validator(mode="after")
@@ -43,7 +46,7 @@ class Settings(BaseSettings):
             missing = [
                 name
                 for name, value in (
-                    ("LANGSMITH_API_KEY", self.langsmith_api_key),
+                    ("LANGCHAIN_API_KEY", self.langchain_api_key),
                     ("LANGSMITH_PROJECT", self.langsmith_project),
                 )
                 if not value

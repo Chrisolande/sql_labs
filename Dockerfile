@@ -1,26 +1,30 @@
-# Dockerfile.db
-FROM postgres:17 AS builder
+FROM python:3.13-slim AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    ca-certificates \
-    postgresql-server-dev-17 \
-    && rm -rf /var/lib/apt/lists/*
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-RUN git clone --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
-    && cd /tmp/pgvector \
-    && make \
-    && make install
+WORKDIR /app
 
-RUN git clone --depth 1 https://github.com/timescale/pg_textsearch.git /tmp/pg_textsearch \
-    && cd /tmp/pg_textsearch \
-    && make \
-    && make install
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
-FROM postgres:17
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-install-project --no-dev
 
-COPY --from=builder /usr/lib/postgresql/17/lib/vector.so /usr/lib/postgresql/17/lib/
-COPY --from=builder /usr/share/postgresql/17/extension/vector* /usr/share/postgresql/17/extension/
-COPY --from=builder /usr/lib/postgresql/17/lib/pg_textsearch.so /usr/lib/postgresql/17/lib/
-COPY --from=builder /usr/share/postgresql/17/extension/pg_textsearch* /usr/share/postgresql/17/extension/
+COPY . /app
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+FROM python:3.13-slim
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
+WORKDIR /app
+
+COPY --from=builder /app /app
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+CMD ["uv", "run", "python", "-m", "app.main"]

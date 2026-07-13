@@ -5,7 +5,7 @@ CREATE OR REPLACE FUNCTION hybrid_search_jobs(
     bm25_weight FLOAT DEFAULT 0.1,
     vector_weight FLOAT DEFAULT 0.9,
     result_limit INT DEFAULT 20,
-    candidate_limit INT DEFAULT 100
+    candidate_limit INT DEFAULT 150
 )
     RETURNS TABLE
             (
@@ -35,27 +35,34 @@ CREATE OR REPLACE FUNCTION hybrid_search_jobs(
     STABLE
 AS
 $$
-WITH bm25_results AS (SELECT j.id  AS job_id,
-                             ROW_NUMBER() OVER (
-                                 ORDER BY j.skills_text <@> to_bm25query(query_text, 'idx_jobs_skills_bm25') ASC
-                                 ) AS rank
-                      FROM jobs j
-                      WHERE j.status = 'active'
-                      ORDER BY j.skills_text <@> to_bm25query(query_text, 'idx_jobs_skills_bm25') ASC
-                      LIMIT candidate_limit),
-     vector_results AS (SELECT e.entity_id                                               AS job_id,
-                               ROW_NUMBER() OVER (ORDER BY e.vector <=> query_embedding) AS rank
-                        FROM embeddings e
-                                 JOIN jobs j ON j.id = e.entity_id AND j.status = 'active'
-                        WHERE e.entity_type = 'job'
-                          AND (e.vector <=> query_embedding) < cosine_distance_threshold
-                        ORDER BY e.vector <=> query_embedding
-                        LIMIT candidate_limit),
-     fused AS (SELECT COALESCE(b.job_id, v.job_id)                       AS job_id,
-                      COALESCE(bm25_weight * (1.0 / (60 + b.rank)), 0) +
-                      COALESCE(vector_weight * (1.0 / (60 + v.rank)), 0) AS rrf_score
-               FROM bm25_results b
-                        FULL OUTER JOIN vector_results v ON b.job_id = v.job_id)
+WITH bm25_results AS (
+    SELECT j.id  AS job_id,
+           ROW_NUMBER() OVER (
+               ORDER BY j.search_text <@> to_bm25query(query_text, 'idx_jobs_search_bm25') ASC
+           ) AS rank
+    FROM jobs j
+    WHERE j.status = 'active'
+      AND j.search_text IS NOT NULL
+    ORDER BY j.search_text <@> to_bm25query(query_text, 'idx_jobs_search_bm25') ASC
+    LIMIT candidate_limit
+),
+vector_results AS (
+    SELECT e.entity_id                                               AS job_id,
+           ROW_NUMBER() OVER (ORDER BY e.vector <=> query_embedding) AS rank
+    FROM embeddings e
+             JOIN jobs j ON j.id = e.entity_id AND j.status = 'active'
+    WHERE e.entity_type = 'job'
+      AND (e.vector <=> query_embedding) < cosine_distance_threshold
+    ORDER BY e.vector <=> query_embedding
+    LIMIT candidate_limit
+),
+fused AS (
+    SELECT COALESCE(b.job_id, v.job_id)                       AS job_id,
+           COALESCE(bm25_weight * (1.0 / (60 + b.rank)), 0) +
+           COALESCE(vector_weight * (1.0 / (60 + v.rank)), 0) AS rrf_score
+    FROM bm25_results b
+             FULL OUTER JOIN vector_results v ON b.job_id = v.job_id
+)
 SELECT j.id,
        j.dedup_hash,
        j.title,
