@@ -4,10 +4,16 @@ from app.core.config.settings import settings
 
 
 def get_fast_model():
-    return init_chat_model(model="gemini-2.5-flash", api_key=settings.gemini_api_key)
+    return init_chat_model(
+        model="gemini-2.5-flash",
+        model_provider="google_genai",
+        api_key=settings.google_api_key,
+    )
 
 
 def get_frontier_model():
     return init_chat_model(
-        model="gemini-3.1-flash-lite", api_key=settings.gemini_api_key
+        model="gemini-2.5-flash",
+        model_provider="google_genai",
+        api_key=settings.google_api_key,
     )

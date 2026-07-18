@@ -100,6 +100,8 @@ async def analyze_query(state: QAGraphState, *, store: Any | None = None):
     user_snippet = ""
     if store and state.user_id:
         try:
+            async with async_session() as db:
+                await migrate_career_memory_table_to_store(db, store, state.user_id)
             user_snippet = await load_career_memories_from_store(store, state.user_id)
         except Exception:
             user_snippet = ""
@@ -135,7 +137,7 @@ async def hybrid_search(state: QAGraphState) -> dict:
     limit = state.extracted_criteria.limit if state.extracted_criteria else None
     async with async_session() as db:
         results = await search_jobs(
-            db=db, query_text=query_text, result_limit=limit or 20
+            db=db, query_text=query_text, result_limit=limit or 3
         )
     return {"retrieved_jobs": results}
 

@@ -59,7 +59,7 @@ def _build_graph(checkpointer: Any, store: Any):
 
 
 def build_qa_graph(*, checkpointer: Any, store: Any):
-    """Build graph with Postgres persistence — rejects in-memory checkpointer."""
+    """Build graph with Postgres persistence - rejects in-memory checkpointer."""
     if checkpointer is None or store is None:
         raise ValueError(
             "Postgres checkpointer and Postgres Store are required. Use build_qa_graph_postgres() or pass async instances."
