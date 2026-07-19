@@ -10,17 +10,57 @@ from sqlalchemy.future import select
 from app.core.db.models.job import Job, JobDescription, JobSource
 
 
+def _skills_text_for(title: str | None, skills: list[str] | None) -> str:
+    parts = [title or ""]
+    parts.extend(s for s in (skills or []) if s)
+    return " ".join(parts).strip()
+
+
+def _search_text_for(
+    title: str | None,
+    role: str | None,
+    job_function: str | None,
+    company_name: str | None,
+    skills_text: str | None,
+) -> str:
+    parts = [
+        title or "",
+        role or "",
+        job_function or "",
+        company_name or "",
+        skills_text or "",
+    ]
+    return " ".join(p for p in parts if p).strip()
+
+
 async def upsert_job(
     db: AsyncSession, normalized, now_utc: datetime
 ) -> tuple[Job, bool]:
     values = normalized.model_dump(exclude={"source"}) | {"last_seen_at": now_utc}
+    values["skills_text"] = _skills_text_for(
+        values.get("title"), values.get("required_skills")
+    )
+    values["search_text"] = _search_text_for(
+        values.get("title"),
+        values.get("role"),
+        values.get("job_function"),
+        values.get("company_name"),
+        values["skills_text"],
+    )
 
     stmt = (
         pg_insert(Job)
         .values(**values)
         .on_conflict_do_update(
             index_elements=["dedup_hash"],
-            set_={"last_seen_at": now_utc, "status": "active"},
+            set_={
+                "last_seen_at": now_utc,
+                "status": "active",
+                "skills_text": values["skills_text"],
+                "search_text": values["search_text"],
+                "required_skills": values.get("required_skills") or [],
+                "title": values.get("title"),
+            },
         )
         .returning(Job, text("xmax = 0 AS is_inserted"))
     )

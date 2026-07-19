@@ -87,9 +87,10 @@ class JobDataLakeClient:
         async def _fetch_page(page: int, per_page: int) -> dict:
             return await self.search_jobs(per_page=per_page, page=page, **search_params)
 
-        return paginate_api(
+        async for item in paginate_api(
             _fetch_page, lambda d: d.get("jobs", []), per_page, max_results, page_cap
-        )
+        ):
+            yield item
 
     async def get_job_by_id(self, external_id: str) -> dict | None:
         if not self.client:

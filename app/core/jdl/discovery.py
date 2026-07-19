@@ -25,14 +25,18 @@ async def run_discovery(
     criteria: JobSearchCriteria,
     source_name: str,
     page_cap: int | None = None,
-    unconfirmed_limit: int = 2,
+    unconfirmed_limit: int | None = None,
     client: JobDataLakeClient | None = None,
     seen_source_job_ids: set[str] | None = None,
+    *,
+    close_stale: bool = True,
 ) -> DiscoveryResult:
     result = DiscoveryResult()
     if seen_source_job_ids is None:
         seen_source_job_ids = set()
     seen_companies: set[str] = set()
+    if unconfirmed_limit is None:
+        unconfirmed_limit = settings.discovery_unconfirmed_limit
 
     async def process_stream(jdl_client) -> None:
         async for raw_job in jdl_client.search_all_results(
@@ -64,9 +68,10 @@ async def run_discovery(
         ) as jdl_client:
             await process_stream(jdl_client)
 
-    result.jobs_closed = await close_stale_jobs(
-        db, source_name, seen_source_job_ids, unconfirmed_limit
-    )
+    if close_stale:
+        result.jobs_closed = await close_stale_jobs(
+            db, source_name, seen_source_job_ids, unconfirmed_limit
+        )
 
     await db.commit()
 
@@ -84,7 +89,7 @@ async def run_discovery(
 
         if seen_companies:
             logger.info(
-                "Populating company summaries for %d companies...",
+                "Populating company summaries for {} companies...",
                 len(seen_companies),
             )
             await populate_for_companies(db, seen_companies)
@@ -96,7 +101,7 @@ async def run_discovery(
 
         if result.job_ids:
             logger.info(
-                "Populating job descriptions for %d jobs...",
+                "Populating job descriptions for {} jobs...",
                 len(result.job_ids),
             )
             await populate_job_descriptions(db, job_ids=result.job_ids, batch_size=5)

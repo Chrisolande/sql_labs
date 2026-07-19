@@ -1,4 +1,5 @@
 import uuid
+from itertools import batched
 
 import httpx
 from loguru import logger
@@ -6,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.batch import process_in_batches
+from app.core.config.settings import settings
 from app.core.db.models.job import Job, JobDescription, JobSource
 from app.core.retry import default_retry
 
@@ -25,7 +27,7 @@ async def fetch_jina_content(
     response = await client.get(jina_url)
 
     if response.status_code == 429:
-        logger.warning("Rate limited by Jina: %s", source_url)
+        logger.warning("Rate limited by Jina: {}", source_url)
         response.raise_for_status()
 
     response.raise_for_status()
@@ -63,45 +65,52 @@ async def populate_job_descriptions(
         logger.info("No jobs require description fetching")
         return
 
-    logger.info("Found %d jobs requiring descriptions", len(rows))
+    logger.info("Found {} jobs requiring descriptions", len(rows))
+
+    headers = {}
+    if settings.jina_api_key:
+        headers["Authorization"] = f"Bearer {settings.jina_api_key}"
 
     async with httpx.AsyncClient(
+        headers=headers,
         timeout=60,
         follow_redirects=True,
     ) as client:
-        responses = await process_in_batches(
-            items=list(rows),
-            processor=lambda row: fetch_jina_content(client, row.source_url),
-            batch_size=batch_size,
-            max_concurrency=MAX_CONCURRENT_REQUESTS,
-        )
-
-        descriptions: list[JobDescription] = []
-
-        for (job_id, source_url), response in zip(rows, responses, strict=False):
-            if isinstance(response, Exception):
-                logger.warning(
-                    "Failed fetching job %s (%s): %s",
-                    job_id,
-                    source_url,
-                    response,
-                )
-                continue
-
-            descriptions.append(
-                JobDescription(
-                    job_id=job_id,
-                    cleaned_text=response,
-                )
+        for batch in batched(rows, batch_size, strict=False):
+            logger.info("Processing batch of {} jobs", len(batch))
+            responses = await process_in_batches(
+                items=list(batch),
+                processor=lambda row: fetch_jina_content(client, row.source_url),
+                batch_size=len(batch),
+                max_concurrency=MAX_CONCURRENT_REQUESTS,
+                rate_per_second=REQUESTS_PER_SECOND,
             )
 
-        if descriptions:
-            db.add_all(descriptions)
-            await db.commit()
+            descriptions: list[JobDescription] = []
 
-            logger.info(
-                "Inserted %d descriptions",
-                len(descriptions),
-            )
+            for (job_id, source_url), response in zip(batch, responses, strict=False):
+                if isinstance(response, Exception):
+                    logger.warning(
+                        "Failed fetching job {} ({}): {}",
+                        job_id,
+                        source_url,
+                        response,
+                    )
+                    continue
+
+                descriptions.append(
+                    JobDescription(
+                        job_id=job_id,
+                        cleaned_text=response,
+                    )
+                )
+
+            if descriptions:
+                db.add_all(descriptions)
+                await db.commit()
+                logger.info(
+                    "Inserted {} descriptions for this batch",
+                    len(descriptions),
+                )
 
     logger.info("Finished populating job descriptions")

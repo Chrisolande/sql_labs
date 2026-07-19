@@ -61,7 +61,7 @@ async def _backfill_and_fetch(
 
     if backfilled:
         logger.info(
-            "Copied existing summaries onto %d job rows (no API cost)",
+            "Copied existing summaries onto {} job rows (no API cost)",
             backfilled,
         )
 
@@ -87,7 +87,7 @@ async def _backfill_and_fetch(
     for company_name, response in zip(missing, responses, strict=False):
         if isinstance(response, Exception):
             logger.warning(
-                "Failed to summarize %s: %s",
+                "Failed to summarize {}: {}",
                 company_name,
                 response,
             )
@@ -102,7 +102,7 @@ async def _backfill_and_fetch(
             .values(company_summary=response)
         )
 
-        logger.info("Summarized: %s", company_name)
+        logger.info("Summarized: {}", company_name)
 
     await db.commit()
 
