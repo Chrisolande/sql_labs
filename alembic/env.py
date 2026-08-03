@@ -7,12 +7,11 @@ from sqlalchemy.ext.asyncio import create_async_engine
 import app.core.db.models.agent_task  # noqa: F401
 import app.core.db.models.application  # noqa: F401
 import app.core.db.models.embedding  # noqa: F401
+import app.core.db.models.ingestion_run  # noqa: F401
 import app.core.db.models.job  # noqa: F401
 import app.core.db.models.matching  # noqa: F401
 import app.core.db.models.memory  # noqa: F401
 import app.core.db.models.user  # noqa: F401
-import app.core.db.models.ingestion_run #noqa: F401
-
 from alembic import context
 from app.core.config.settings import settings
 from app.core.db.base import Base
